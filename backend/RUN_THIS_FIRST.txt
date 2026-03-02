@@ -1,0 +1,35 @@
+===============================================================================
+                    FIX FOR fb_verify_token ISSUE
+===============================================================================
+
+PROBLEM: Tenant 7's fb_verify_token is stored as "d" instead of "chatbottoken@3420"
+
+SOLUTION: Run this command on your server:
+
+    cd ChatBotBE/backend
+    python diagnose_and_fix.py
+
+This script will:
+✓ Check your database configuration
+✓ Identify the exact problem
+✓ Show you what's wrong
+✓ Offer to fix it automatically
+
+Just answer "yes" when it asks to apply the fix.
+
+After the fix:
+1. Restart your FastAPI app
+2. Update tenant 7 in your admin UI
+3. Test webhook verification again
+
+===============================================================================
+
+Alternative: If you want to check without fixing first:
+
+    python test_postgres_column.py
+
+Or read the full guide:
+
+    cat TESTING_INSTRUCTIONS.md
+
+===============================================================================
