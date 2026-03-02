@@ -201,17 +201,20 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
             else:
                 raise
         
-        # Wait for collection to become ACTIVE (max 5 minutes)
-        max_wait_time = 300  # 5 minutes
+        # Wait for collection to become ACTIVE (max 10 minutes)
+        max_wait_time = 600  # 10 minutes
         start_time = time.time()
+        poll_interval = 30  # Check every 10 seconds
         
         while time.time() - start_time < max_wait_time:
             collection_response = aoss_client.batch_get_collection(ids=[collection_id])
             if collection_response['collectionDetails']:
                 collection_status = collection_response['collectionDetails'][0]['status']
+                elapsed = int(time.time() - start_time)
+                
                 if collection_status == 'ACTIVE':
                     collection_endpoint = collection_response['collectionDetails'][0].get('collectionEndpoint')
-                    print(f"   ✅ Collection is ACTIVE")
+                    print(f"   ✅ Collection is ACTIVE (took {elapsed} seconds)")
                     print(f"   📍 Endpoint: {collection_endpoint}")
                     
                     # Wait for permissions to propagate only if collection was just created
@@ -283,9 +286,9 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
                     break
                 elif collection_status == 'FAILED':
                     raise Exception(f"Collection creation failed")
-            time.sleep(10)
+            time.sleep(poll_interval)
         else:
-            raise Exception(f"Collection did not become ACTIVE within {max_wait_time} seconds")
+            raise Exception(f"Collection did not become ACTIVE within {max_wait_time} seconds (10 minutes). It may still be creating - try again in a few minutes.")
         
         # Store collection details in database (use AgentCollection)
         from models import AgentCollection
