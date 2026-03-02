@@ -1560,57 +1560,39 @@ from rag_model.rag_website import (
 )
 
 
-@app.post("/tenants/{tenant_id}/websites/crawl", response_model=WebsiteCrawlResponse, status_code=202)
+@app.post("/tenants/{tenant_id}/websites/crawl", status_code=200)
 async def initiate_website_crawl(
-    tenant_id: int,  # This is actually agent_id but keeping URL structure
+    tenant_id: int,  # This is actually agent_id
     crawl_request: WebsiteCrawlCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
-    Initiate website crawling by creating a Bedrock Knowledge Base with Web Crawler.
+    Initiate website crawling. Returns immediately with 200 OK.
     
-    Note: tenant_id in the URL is actually used as agent_id internally.
-    
-    This endpoint:
-    1. Returns immediately with website_id and status "INITIALIZING"
-    2. Creates OpenSearch collection in background (3-5 minutes)
-    3. Creates Bedrock Knowledge Base in background
-    4. Starts crawling in background
-    
-    The entire process happens asynchronously.
+    The crawl happens in background. Use GET /tenants/{agent_id}/websites/status to check progress.
     """
     try:
-        # Validate AWS configuration first
+        # Validate AWS configuration
         try:
             validate_aws_configuration()
         except ValueError as e:
             raise HTTPException(status_code=500, detail=f"AWS configuration error: {str(e)}")
         
-        # Use tenant_id as agent_id
         agent_id = tenant_id
         
         # Create or get agent record
         agent = db.query(Agent).filter(Agent.id == agent_id).first()
         if not agent:
-            # Auto-create agent if it doesn't exist
             agent = Agent(id=agent_id, agent_name=f"Agent {agent_id}")
             db.add(agent)
             db.commit()
             db.refresh(agent)
-            print(f"✅ Created new agent with ID: {agent_id}")
         
-        print(f"\n{'='*60}")
-        print(f"🚀 Initiating website crawl for agent {agent_id}")
-        print(f"   URL: {crawl_request.url}")
-        print(f"   Max pages: {crawl_request.max_pages}")
-        print(f"   Crawl scope: {crawl_request.crawl_scope}")
-        print(f"{'='*60}\n")
-        
-        # Create website_crawls record with status "INITIALIZING"
+        # Create website_crawls record
         website_crawl = WebsiteCrawl(
             agent_id=agent_id,
-            tenant_id=None,  # Not using tenant anymore
+            tenant_id=None,
             website_url=crawl_request.url,
             max_pages=crawl_request.max_pages,
             crawl_scope=crawl_request.crawl_scope,
@@ -1621,9 +1603,8 @@ async def initiate_website_crawl(
         db.refresh(website_crawl)
         
         website_id = website_crawl.website_id
-        print(f"✅ Created database record with website_id: {website_id}")
         
-        # Add background task to process the crawl
+        # Queue background task
         background_tasks.add_task(
             process_website_crawl_background,
             agent_id=agent_id,
@@ -1633,32 +1614,93 @@ async def initiate_website_crawl(
             crawl_scope=crawl_request.crawl_scope
         )
         
-        # Calculate estimated completion time (collection creation + crawling)
-        estimated_seconds = 300 + crawl_request.max_pages  # 5 min for collection + crawl time
-        estimated_completion = datetime.utcnow() + timedelta(seconds=estimated_seconds)
-        
-        print(f"\n{'='*60}")
-        print(f"✅ Website crawl queued for background processing!")
-        print(f"   Agent ID: {agent_id}")
-        print(f"   Website ID: {website_id}")
-        print(f"   Status: INITIALIZING")
-        print(f"   Estimated completion: {estimated_completion.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-        print(f"{'='*60}\n")
-        
-        return WebsiteCrawlResponse(
-            website_id=website_id,
-            knowledge_base_id=None,  # Will be set in background
-            status="INITIALIZING",
-            estimated_completion_time=estimated_completion,
-            message=f"Website crawl is being initialized. Check status at /tenants/{agent_id}/websites/crawl/{website_id}/status"
-        )
+        return {
+            "status": "success",
+            "message": f"Crawl initiated for {crawl_request.url}. Use GET /tenants/{agent_id}/websites/status to check progress.",
+            "agent_id": agent_id
+        }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error initiating crawl: {str(e)}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error initiating website crawl: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@app.get("/tenants/{tenant_id}/websites/status")
+async def get_agent_crawl_status(
+    tenant_id: int,  # This is actually agent_id
+    db: Session = Depends(get_db)
+):
+    """
+    Get current status of all website crawls for an agent.
+    
+    Returns list of all crawls with their current status.
+    """
+    try:
+        agent_id = tenant_id
+        
+        # Get all website crawls for this agent, ordered by most recent first
+        crawls = db.query(WebsiteCrawl).filter(
+            WebsiteCrawl.agent_id == agent_id
+        ).order_by(WebsiteCrawl.created_at.desc()).all()
+        
+        if not crawls:
+            return {
+                "agent_id": agent_id,
+                "crawls": [],
+                "message": "No crawls found for this agent"
+            }
+        
+        # Build response with all crawl statuses
+        crawl_list = []
+        for crawl in crawls:
+            # For active crawls, check AWS status
+            if crawl.status in ["STARTING", "IN_PROGRESS"] and crawl.ingestion_job_id:
+                try:
+                    bedrock_agent = boto3.client('bedrock-agent', region_name=AWS_REGION)
+                    job_response = bedrock_agent.get_ingestion_job(
+                        knowledgeBaseId=crawl.knowledge_base_id,
+                        dataSourceId=crawl.data_source_id,
+                        ingestionJobId=crawl.ingestion_job_id
+                    )
+                    
+                    job_status = job_response['ingestionJob']['status']
+                    
+                    # Update database if status changed
+                    if job_status == 'COMPLETE' and crawl.status != 'COMPLETE':
+                        crawl.status = 'COMPLETE'
+                        crawl.pages_crawled = crawl.max_pages
+                        db.commit()
+                    elif job_status == 'FAILED' and crawl.status != 'FAILED':
+                        crawl.status = 'FAILED'
+                        crawl.error_message = job_response['ingestionJob'].get('failureReasons', ['Unknown error'])[0]
+                        db.commit()
+                    elif job_status == 'IN_PROGRESS':
+                        crawl.status = 'IN_PROGRESS'
+                        db.commit()
+                        
+                except Exception as e:
+                    print(f"Error checking job status: {e}")
+            
+            crawl_list.append({
+                "website_url": crawl.website_url,
+                "status": crawl.status,
+                "max_pages": crawl.max_pages,
+                "pages_crawled": crawl.pages_crawled,
+                "knowledge_base_id": crawl.knowledge_base_id,
+                "created_at": crawl.created_at.isoformat() if crawl.created_at else None,
+                "error_message": crawl.error_message
+            })
+        
+        return {
+            "agent_id": agent_id,
+            "total_crawls": len(crawl_list),
+            "crawls": crawl_list
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
 def process_website_crawl_background(
@@ -1688,38 +1730,62 @@ def process_website_crawl_background(
         
         # Step 1: Create or get OpenSearch collection (3-5 minutes for new collection)
         print(f"📦 Step 1: Creating/getting OpenSearch collection...")
-        collection = create_or_get_opensearch_collection(agent_id, db)
-        print(f"✅ Collection ready: {collection['collection_id']}")
+        try:
+            collection = create_or_get_opensearch_collection(agent_id, db)
+            print(f"✅ Collection ready: {collection['collection_id']}")
+        except Exception as e:
+            error_msg = f"Failed to create OpenSearch collection: {str(e)}"
+            print(f"❌ {error_msg}")
+            website_crawl.status = "FAILED"
+            website_crawl.error_message = error_msg
+            db.commit()
+            return
         
         # Step 2: Create or get Knowledge Base
         print(f"🧠 Step 2: Creating/getting Knowledge Base...")
-        kb_result = create_or_get_knowledge_base(
-            agent_id=agent_id,
-            collection_arn=collection['collection_arn'],
-            db=db
-        )
-        print(f"✅ Knowledge Base ready: {kb_result['knowledge_base_id']}")
-        
-        # Update record with knowledge_base_id
-        website_crawl.knowledge_base_id = kb_result['knowledge_base_id']
-        db.commit()
+        try:
+            kb_result = create_or_get_knowledge_base(
+                agent_id=agent_id,
+                collection_arn=collection['collection_arn'],
+                db=db
+            )
+            print(f"✅ Knowledge Base ready: {kb_result['knowledge_base_id']}")
+            
+            # Update record with knowledge_base_id
+            website_crawl.knowledge_base_id = kb_result['knowledge_base_id']
+            db.commit()
+        except Exception as e:
+            error_msg = f"Failed to create Knowledge Base: {str(e)}"
+            print(f"❌ {error_msg}")
+            website_crawl.status = "FAILED"
+            website_crawl.error_message = error_msg
+            db.commit()
+            return
         
         # Step 3: Create data source and start crawl
         print(f"🕷️  Step 3: Starting web crawl...")
-        crawl_result = create_data_source_and_start_crawl(
-            knowledge_base_id=kb_result['knowledge_base_id'],
-            website_url=url,
-            max_pages=max_pages,
-            crawl_scope=crawl_scope,
-            db=db
-        )
-        print(f"✅ Crawl started: {crawl_result['ingestion_job_id']}")
-        
-        # Update record with data_source_id, ingestion_job_id, and status
-        website_crawl.data_source_id = crawl_result['data_source_id']
-        website_crawl.ingestion_job_id = crawl_result['ingestion_job_id']
-        website_crawl.status = "STARTING"
-        db.commit()
+        try:
+            crawl_result = create_data_source_and_start_crawl(
+                knowledge_base_id=kb_result['knowledge_base_id'],
+                website_url=url,
+                max_pages=max_pages,
+                crawl_scope=crawl_scope,
+                db=db
+            )
+            print(f"✅ Crawl started: {crawl_result['ingestion_job_id']}")
+            
+            # Update record with data_source_id, ingestion_job_id, and status
+            website_crawl.data_source_id = crawl_result['data_source_id']
+            website_crawl.ingestion_job_id = crawl_result['ingestion_job_id']
+            website_crawl.status = "STARTING"
+            db.commit()
+        except Exception as e:
+            error_msg = f"Failed to start crawl: {str(e)}"
+            print(f"❌ {error_msg}")
+            website_crawl.status = "FAILED"
+            website_crawl.error_message = error_msg
+            db.commit()
+            return
         
         print(f"\n{'='*60}")
         print(f"✅ Background: Crawl processing complete for {website_id}")
@@ -1728,13 +1794,15 @@ def process_website_crawl_background(
         print(f"{'='*60}\n")
         
     except Exception as e:
-        print(f"❌ Background: Error processing crawl: {str(e)}")
+        print(f"❌ Background: Unexpected error processing crawl: {str(e)}")
+        import traceback
+        traceback.print_exc()
         # Update status to FAILED
         try:
             website_crawl = db.query(WebsiteCrawl).filter_by(website_id=website_id).first()
             if website_crawl:
                 website_crawl.status = "FAILED"
-                website_crawl.error_message = str(e)
+                website_crawl.error_message = f"Unexpected error: {str(e)}"
                 db.commit()
         except Exception as update_error:
             print(f"❌ Failed to update error status: {str(update_error)}")
