@@ -15,11 +15,20 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: fastapi-backend
+    env_file:
+      - .env
     environment:
       - DATABASE_URI=postgresql://postgres:123@postgres_db:5432/multi_tenant_admin
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-south-1}
+      - AWS_DEFAULT_REGION=${AWS_REGION}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID}
+      - BEDROCK_ROLE_ARN=${BEDROCK_ROLE_ARN}
+      - MAX_CRAWL_PAGES_DEFAULT=${MAX_CRAWL_PAGES_DEFAULT:-100}
+      - MAX_CRAWL_PAGES_LIMIT=${MAX_CRAWL_PAGES_LIMIT:-25000}
+      - CRAWL_SCOPE_DEFAULT=${CRAWL_SCOPE_DEFAULT:-HOST}
+      - RETRIEVE_NUM_RESULTS=${RETRIEVE_NUM_RESULTS:-12}
     volumes:
       - ./uploads:/app/uploads
     depends_on:
