@@ -734,7 +734,21 @@ def query_website_knowledge_base(
                     },
                     'generationConfiguration': {
                         'promptTemplate': {
-                            'textPromptTemplate': 'You are a helpful assistant. Answer the question based on the provided context. Question: $query$ Context: $search_results$'
+                            'textPromptTemplate': '''You are a knowledgeable and friendly assistant. Answer questions naturally and conversationally based on the provided information.
+
+INSTRUCTIONS:
+- Provide direct, clear answers without phrases like "Based on the context" or "According to the information"
+- Be comprehensive and include all relevant details from the context
+- Use bullet points or numbered lists for multiple items or steps
+- If the context doesn't contain the answer, say "I don't have that information in my knowledge base"
+- Speak naturally, as if having a conversation
+- Include specific examples, numbers, or details when available
+
+Question: $query$
+
+Context: $search_results$
+
+Answer:'''
                         },
                         'inferenceConfig': {
                             'textInferenceConfig': {
