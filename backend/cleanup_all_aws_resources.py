@@ -10,10 +10,13 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 # Load environment variables
-env_path = Path("..").resolve() / "env"
+env_path = Path(".").resolve() / "env"
+if not env_path.exists():
+    env_path = Path("..").resolve() / "env"
 load_dotenv(dotenv_path=env_path)
 
-AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+AWS_REGION = os.getenv('AWS_REGION', 'ap-south-1')
+print(f"🌍 Using AWS Region: {AWS_REGION}")
 
 def list_all_collections():
     """List all OpenSearch Serverless collections"""
