@@ -68,6 +68,31 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 def create_tables():
     Base.metadata.create_all(bind=engine)
 
+@app.on_event("startup")
+async def start_background_tasks():
+    """Start background tasks for crawl status updates"""
+    import asyncio
+    import threading
+    from crawl_status_updater import update_crawl_statuses
+    
+    def run_updater():
+        """Run status updater in background thread"""
+        import time
+        CHECK_INTERVAL = 30  # seconds
+        
+        while True:
+            try:
+                update_crawl_statuses()
+                time.sleep(CHECK_INTERVAL)
+            except Exception as e:
+                print(f"❌ Error in background status updater: {e}")
+                time.sleep(CHECK_INTERVAL)
+    
+    # Start the updater in a daemon thread
+    updater_thread = threading.Thread(target=run_updater, daemon=True)
+    updater_thread.start()
+    print("✅ Background crawl status updater started")
+
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1655,7 +1680,8 @@ async def get_agent_crawl_status(
         # Build response with all crawl statuses
         crawl_list = []
         for crawl in crawls:
-            # For active crawls, check AWS status
+            # For active crawls only (STARTING or IN_PROGRESS), check AWS status
+            # Once COMPLETE or FAILED, we don't need to check AWS again
             if crawl.status in ["STARTING", "IN_PROGRESS"] and crawl.ingestion_job_id:
                 try:
                     bedrock_agent = boto3.client('bedrock-agent', region_name=AWS_REGION)
@@ -1665,19 +1691,24 @@ async def get_agent_crawl_status(
                         ingestionJobId=crawl.ingestion_job_id
                     )
                     
-                    job_status = job_response['ingestionJob']['status']
+                    job = job_response['ingestionJob']
+                    job_status = job['status']
+                    statistics = job.get('statistics', {})
+                    pages_crawled = statistics.get('numberOfDocumentsScanned', 0)
                     
                     # Update database if status changed
                     if job_status == 'COMPLETE' and crawl.status != 'COMPLETE':
                         crawl.status = 'COMPLETE'
-                        crawl.pages_crawled = crawl.max_pages
+                        crawl.pages_crawled = pages_crawled
                         db.commit()
                     elif job_status == 'FAILED' and crawl.status != 'FAILED':
                         crawl.status = 'FAILED'
-                        crawl.error_message = job_response['ingestionJob'].get('failureReasons', ['Unknown error'])[0]
+                        failure_reasons = job.get('failureReasons', ['Unknown error'])
+                        crawl.error_message = failure_reasons[0] if isinstance(failure_reasons, list) else str(failure_reasons)
                         db.commit()
                     elif job_status == 'IN_PROGRESS':
                         crawl.status = 'IN_PROGRESS'
+                        crawl.pages_crawled = pages_crawled
                         db.commit()
                         
                 except Exception as e:
