@@ -1685,7 +1685,8 @@ async def get_agent_crawl_status(
             # Once COMPLETE or FAILED, we don't need to check AWS again
             if crawl.status in ["STARTING", "IN_PROGRESS"] and crawl.ingestion_job_id:
                 try:
-                    bedrock_agent = boto3.client('bedrock-agent', region_name=AWS_REGION)
+                    aws_region = os.getenv('AWS_REGION', 'ap-south-1')
+                    bedrock_agent = boto3.client('bedrock-agent', region_name=aws_region)
                     job_response = bedrock_agent.get_ingestion_job(
                         knowledgeBaseId=crawl.knowledge_base_id,
                         dataSourceId=crawl.data_source_id,
