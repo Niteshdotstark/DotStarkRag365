@@ -55,6 +55,9 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     """
     Creates or retrieves an OpenSearch Serverless collection for a tenant/agent.
     
+    DEMO MODE: Currently hardcoded to use agent_id 3421 for all agents to save costs.
+    For production: Change agent_id = 3421 to agent_id = tenant_id
+    
     Note: tenant_id is actually used as agent_id in the new system.
     
     Args:
@@ -74,7 +77,12 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     """
     from models import TenantCollection, AgentCollection, Agent
     
-    agent_id = tenant_id  # Use as agent_id
+    # DEMO MODE: Use fixed agent_id to share one collection across all agents
+    # This saves $700/month per agent. For production, change to: agent_id = tenant_id
+    agent_id = 3421  # <-- Change this to tenant_id for production
+    
+    if agent_id != tenant_id:
+        print(f"🎯 DEMO MODE: Using shared collection (agent_id {agent_id}) for request from agent {tenant_id}")
     
     # Check if agent collection already exists in database
     existing_collection = db.query(AgentCollection).filter_by(agent_id=agent_id).first()
