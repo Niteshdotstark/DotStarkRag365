@@ -1581,7 +1581,8 @@ from rag_model.rag_website import (
     create_data_source_and_start_crawl,
     check_ingestion_status,
     query_website_knowledge_base,
-    validate_aws_configuration
+    validate_aws_configuration,
+    AWS_REGION
 )
 
 
