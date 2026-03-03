@@ -84,6 +84,28 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     if agent_id != tenant_id:
         print(f"🎯 DEMO MODE: Using shared collection (agent_id {agent_id}) for request from agent {tenant_id}")
     
+    # Ensure the demo agent exists in the database
+    demo_agent = db.query(Agent).filter_by(id=agent_id).first()
+    if not demo_agent:
+        print(f"⚠️  Demo agent {agent_id} doesn't exist, creating it...")
+        demo_agent = Agent(
+            id=agent_id,
+            tenant_id=1,  # Default tenant
+            name="Shared Demo Agent",
+            description="Shared agent for cost optimization (demo mode)"
+        )
+        db.add(demo_agent)
+        try:
+            db.commit()
+            print(f"✅ Created demo agent {agent_id}")
+        except Exception as e:
+            db.rollback()
+            print(f"⚠️  Could not create demo agent (may already exist): {e}")
+            # Try to fetch it again in case of race condition
+            demo_agent = db.query(Agent).filter_by(id=agent_id).first()
+            if not demo_agent:
+                raise Exception(f"Demo agent {agent_id} doesn't exist and couldn't be created")
+    
     # Check if agent collection already exists in database
     existing_collection = db.query(AgentCollection).filter_by(agent_id=agent_id).first()
     if existing_collection:
