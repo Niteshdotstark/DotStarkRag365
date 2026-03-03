@@ -90,9 +90,7 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
         print(f"⚠️  Demo agent {agent_id} doesn't exist, creating it...")
         demo_agent = Agent(
             id=agent_id,
-            tenant_id=1,  # Default tenant
-            name="Shared Demo Agent",
-            description="Shared agent for cost optimization (demo mode)"
+            agent_name="Shared Demo Agent (Cost Optimization)"
         )
         db.add(demo_agent)
         try:
