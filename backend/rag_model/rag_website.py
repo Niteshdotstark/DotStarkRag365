@@ -247,17 +247,66 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
                     
                     # Wait for permissions to propagate only if collection was just created
                     if collection_created_now:
-                        print(f"   ⏳ Waiting for permissions to propagate (90 seconds)...")
-                        time.sleep(90)  # Wait 90 seconds for AWS to propagate permissions
+                        print(f"   ⏳ Waiting for permissions to propagate (30 seconds)...")
+                        time.sleep(30)  # Wait 30 seconds for AWS to propagate permissions
                         print(f"   ✅ Permissions should be ready")
                     else:
                         print(f"   ℹ️  Using existing collection, skipping permission wait")
                     
-                    # Skip manual index creation - Bedrock will create it automatically
-                    # This avoids permission propagation delays (which can take hours)
-                    # Bedrock service has immediate access and will create the index on first use
-                    print(f"   ℹ️  Index will be created automatically by Bedrock on first use")
-                    print(f"   ℹ️  This avoids OpenSearch permission propagation delays")
+                    # Create the index now that permissions are fixed
+                    print(f"   📝 Creating OpenSearch index...")
+                    try:
+                        from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
+                        
+                        credentials = boto3.Session().get_credentials()
+                        auth = AWSV4SignerAuth(credentials, AWS_REGION, 'aoss')
+                        
+                        host = collection_endpoint.replace('https://', '')
+                        client = OpenSearch(
+                            hosts=[{'host': host, 'port': 443}],
+                            http_auth=auth,
+                            use_ssl=True,
+                            verify_certs=True,
+                            connection_class=RequestsHttpConnection,
+                            timeout=300
+                        )
+                        
+                        index_name = 'bedrock-knowledge-base-default-index'
+                        
+                        # Check if index already exists
+                        if client.indices.exists(index=index_name):
+                            print(f"   ✅ Index already exists: {index_name}")
+                        else:
+                            # Create index with proper schema for Bedrock
+                            index_body = {
+                                "settings": {
+                                    "index.knn": True
+                                },
+                                "mappings": {
+                                    "properties": {
+                                        "bedrock-knowledge-base-default-vector": {
+                                            "type": "knn_vector",
+                                            "dimension": 1024,
+                                            "method": {
+                                                "engine": "faiss",
+                                                "name": "hnsw"
+                                            }
+                                        },
+                                        "AMAZON_BEDROCK_TEXT_CHUNK": {
+                                            "type": "text"
+                                        },
+                                        "AMAZON_BEDROCK_METADATA": {
+                                            "type": "text"
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            result = client.indices.create(index=index_name, body=index_body)
+                            print(f"   ✅ Index created successfully: {index_name}")
+                    except Exception as e:
+                        print(f"   ⚠️  Could not create index (will let Bedrock create it): {e}")
+                        # Don't fail - Bedrock can still create it
                     
                     break
                 elif collection_status == 'FAILED':
