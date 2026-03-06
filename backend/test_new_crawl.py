@@ -18,7 +18,7 @@ def test_crawl():
     # Step 1: Initiate crawl
     print("1️⃣  Initiating crawl...")
     crawl_data = {
-        "website_url": "https://example.com",
+        "url": "https://example.com",
         "max_pages": 1
     }
     
