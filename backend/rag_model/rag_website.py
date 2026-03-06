@@ -79,7 +79,7 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     
     # DEMO MODE: Use fixed agent_id to share one collection across all agents
     # This saves $700/month per agent. For production, change to: agent_id = tenant_id
-    agent_id = 3421  # <-- Change this to tenant_id for production
+    agent_id = 3213  # <-- Change this to tenant_id for production
     
     if agent_id != tenant_id:
         print(f"🎯 DEMO MODE: Using shared collection (agent_id {agent_id}) for request from agent {tenant_id}")
