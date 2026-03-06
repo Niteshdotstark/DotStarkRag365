@@ -77,8 +77,13 @@ def fix_bedrock_role_permissions():
             PolicyName=policy_name
         )
         
+        # Policy document might be dict or string
+        verified_policy = policy_response['PolicyDocument']
+        if isinstance(verified_policy, str):
+            verified_policy = json.loads(verified_policy)
+        
         print(f"   ✅ Policy verified:")
-        print(json.dumps(json.loads(policy_response['PolicyDocument']), indent=2))
+        print(json.dumps(verified_policy, indent=2))
         
         print(f"\n{'='*70}")
         print(f"✅ SUCCESS!")
