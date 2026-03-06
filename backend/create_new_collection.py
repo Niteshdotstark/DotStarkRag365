@@ -150,9 +150,48 @@ def create_collection_with_index():
         return False
     
     # Step 6: Wait for permissions to propagate
-    print("6️⃣  Waiting for permissions to propagate (90 seconds)...")
-    time.sleep(90)
-    print(f"   ✅ Permissions ready\n")
+    print("6️⃣  Waiting for permissions to propagate (120 seconds)...")
+    time.sleep(120)
+    print(f"   ✅ Permissions should be ready\n")
+    
+    # Step 6.5: Update data access policy with actual collection ID
+    print("6.5️⃣  Updating data access policy with collection ID...")
+    try:
+        # Get current policy version
+        policy_response = aoss_client.get_access_policy(name=policy_name, type='data')
+        policy_version = policy_response['accessPolicyDetail']['policyVersion']
+        
+        # Update with actual collection ID
+        aoss_client.update_access_policy(
+            name=policy_name,
+            type='data',
+            policyVersion=policy_version,
+            policy=f'''[{{
+                "Rules": [
+                    {{
+                        "ResourceType": "collection",
+                        "Resource": ["collection/{collection_id}"],
+                        "Permission": ["aoss:*"]
+                    }},
+                    {{
+                        "ResourceType": "index",
+                        "Resource": ["index/{collection_id}/*"],
+                        "Permission": ["aoss:*"]
+                    }}
+                ],
+                "Principal": ["{BEDROCK_ROLE_ARN}", "{current_user_arn}", "arn:aws:iam::{AWS_ACCOUNT_ID}:root"]
+            }}]'''
+        )
+        print(f"   ✅ Policy updated with collection ID\n")
+        
+        # Wait again for policy update to propagate
+        print("   ⏳ Waiting 30 more seconds for policy update...")
+        time.sleep(30)
+        print(f"   ✅ Ready\n")
+        
+    except Exception as e:
+        print(f"   ⚠️  Could not update policy: {e}\n")
+        print(f"   ℹ️  Continuing anyway...\n")
     
     # Step 7: Create the vector index
     print("7️⃣  Creating vector index in OpenSearch...")

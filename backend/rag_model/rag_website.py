@@ -253,63 +253,11 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
                     else:
                         print(f"   ℹ️  Using existing collection, skipping permission wait")
                     
-                    # Create the vector index in OpenSearch (required for Bedrock)
-                    print(f"   📊 Creating vector index in OpenSearch...")
-                    try:
-                        from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
-                        
-                        # Get AWS credentials for signing requests
-                        credentials = boto3.Session().get_credentials()
-                        auth = AWSV4SignerAuth(credentials, AWS_REGION, 'aoss')
-                        
-                        # Connect to OpenSearch Serverless
-                        host = collection_endpoint.replace('https://', '').replace('/', '')
-                        client = OpenSearch(
-                            hosts=[{'host': host, 'port': 443}],
-                            http_auth=auth,
-                            use_ssl=True,
-                            verify_certs=True,
-                            connection_class=RequestsHttpConnection,
-                            timeout=300
-                        )
-                        
-                        # Create the vector index that Bedrock will use
-                        index_name = 'bedrock-knowledge-base-default-index'
-                        
-                        if not client.indices.exists(index=index_name):
-                            # Create index with vector search configuration
-                            index_body = {
-                                "settings": {
-                                    "index.knn": True
-                                },
-                                "mappings": {
-                                    "properties": {
-                                        "bedrock-knowledge-base-default-vector": {
-                                            "type": "knn_vector",
-                                            "dimension": 1024,
-                                            "method": {
-                                                "engine": "faiss",
-                                                "name": "hnsw"
-                                            }
-                                        },
-                                        "AMAZON_BEDROCK_TEXT_CHUNK": {
-                                            "type": "text"
-                                        },
-                                        "AMAZON_BEDROCK_METADATA": {
-                                            "type": "text"
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            client.indices.create(index=index_name, body=index_body)
-                            print(f"   ✅ Created vector index: {index_name}")
-                        else:
-                            print(f"   ℹ️  Vector index already exists: {index_name}")
-                            
-                    except Exception as e:
-                        print(f"   ❌ Error creating vector index: {e}")
-                        raise Exception(f"Failed to create OpenSearch index: {e}")
+                    # Skip manual index creation - Bedrock will create it automatically
+                    # This avoids permission propagation delays (which can take hours)
+                    # Bedrock service has immediate access and will create the index on first use
+                    print(f"   ℹ️  Index will be created automatically by Bedrock on first use")
+                    print(f"   ℹ️  This avoids OpenSearch permission propagation delays")
                     
                     break
                 elif collection_status == 'FAILED':
@@ -408,7 +356,7 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
         
         # Determine policy name based on collection
         # For shared collection (agent 3421), use kb-policy-3421
-        if 'l2gyy0eln3h84ay5st85' in collection_arn:
+        if 'r0fqf4rli0n632ypd4la' in collection_arn:
             policy_name = 'kb-policy-3421'
         else:
             policy_name = f'kb-policy-{agent_id}'
