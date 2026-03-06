@@ -398,6 +398,77 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
     # Create new knowledge base
     print(f"🧠 Creating new Bedrock Knowledge Base for agent {agent_id}")
     
+    # Extract collection ID from ARN for policy creation
+    collection_id = collection_arn.split('/')[-1]
+    
+    # Ensure data access policy exists for the collection
+    print(f"🔐 Ensuring data access policy exists for collection...")
+    try:
+        aoss_client = boto3.client('opensearchserverless', region_name=AWS_REGION)
+        
+        # Determine policy name based on collection
+        # For shared collection (agent 3421), use kb-policy-3421
+        if 'l2gyy0eln3h84ay5st85' in collection_arn:
+            policy_name = 'kb-policy-3421'
+        else:
+            policy_name = f'kb-policy-{agent_id}'
+        
+        import json
+        policy_document = [
+            {
+                "Rules": [
+                    {
+                        "Resource": [f"collection/{collection_id}"],
+                        "Permission": [
+                            "aoss:CreateCollectionItems",
+                            "aoss:DeleteCollectionItems",
+                            "aoss:UpdateCollectionItems",
+                            "aoss:DescribeCollectionItems"
+                        ],
+                        "ResourceType": "collection"
+                    },
+                    {
+                        "Resource": [f"index/{collection_id}/*"],
+                        "Permission": [
+                            "aoss:CreateIndex",
+                            "aoss:DeleteIndex",
+                            "aoss:UpdateIndex",
+                            "aoss:DescribeIndex",
+                            "aoss:ReadDocument",
+                            "aoss:WriteDocument"
+                        ],
+                        "ResourceType": "index"
+                    }
+                ],
+                "Principal": [
+                    BEDROCK_ROLE_ARN,
+                    f"arn:aws:iam::{AWS_ACCOUNT_ID}:root"
+                ],
+                "Description": f"Data access policy for agent {agent_id}"
+            }
+        ]
+        
+        # Try to get existing policy
+        try:
+            aoss_client.get_access_policy(name=policy_name, type='data')
+            print(f"   ✅ Data access policy already exists: {policy_name}")
+        except aoss_client.exceptions.ResourceNotFoundException:
+            # Create new policy
+            print(f"   📝 Creating data access policy: {policy_name}")
+            aoss_client.create_access_policy(
+                name=policy_name,
+                type='data',
+                policy=json.dumps(policy_document),
+                description=f'Data access policy for agent {agent_id}'
+            )
+            print(f"   ✅ Data access policy created")
+            # Wait a moment for policy to propagate
+            time.sleep(2)
+    
+    except Exception as e:
+        print(f"   ⚠️  Warning: Could not ensure data access policy: {e}")
+        print(f"   ℹ️  Continuing anyway...")
+    
     bedrock_agent = boto3.client('bedrock-agent', region_name=AWS_REGION)
     
     kb_name = f"kb-agent-{agent_id}"
