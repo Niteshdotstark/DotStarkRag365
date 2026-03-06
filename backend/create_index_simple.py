@@ -12,7 +12,7 @@ AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 def create_index():
     """Create the Bedrock index in OpenSearch"""
     
-    collection_endpoint = 'https://l2gyy0eln3h84ay5st85.ap-south-1.aoss.amazonaws.com'
+    collection_endpoint = 'https://r0fqf4rli0n632ypd4la.ap-south-1.aoss.amazonaws.com'
     index_name = 'bedrock-knowledge-base-default-index'
     
     print(f"\n{'='*70}")
