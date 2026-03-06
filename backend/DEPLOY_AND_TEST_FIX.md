@@ -23,7 +23,7 @@ SSH into your server and run:
 ```bash
 cd ~/DotStarkRag365/backend
 git pull origin main
-sudo docker-compose restart fastapi-backend
+sudo docker-compose restart backend
 ```
 
 ## Test the Fix

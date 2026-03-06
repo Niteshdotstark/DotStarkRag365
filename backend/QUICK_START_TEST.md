@@ -13,7 +13,7 @@ cd ~/DotStarkRag365/backend
 git pull origin main
 
 # Restart backend
-sudo docker-compose restart fastapi-backend
+sudo docker-compose restart backend
 
 # Wait 10 seconds for restart
 sleep 10
