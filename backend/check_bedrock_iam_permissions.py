@@ -33,7 +33,12 @@ def check_bedrock_role():
         role = iam_client.get_role(RoleName=role_name)
         print(f"✅ Role exists")
         print(f"   Created: {role['Role']['CreateDate']}")
-        print(f"   Trust Policy: {json.dumps(json.loads(role['Role']['AssumeRolePolicyDocument']), indent=2)}\n")
+        
+        # Trust policy might be dict or string
+        trust_policy = role['Role']['AssumeRolePolicyDocument']
+        if isinstance(trust_policy, str):
+            trust_policy = json.loads(trust_policy)
+        print(f"   Trust Policy: {json.dumps(trust_policy, indent=2)}\n")
         
         # Check inline policies
         print(f"📋 Inline Policies:")
@@ -47,8 +52,11 @@ def check_bedrock_role():
                     RoleName=role_name,
                     PolicyName=policy_name
                 )
+                policy_doc = policy['PolicyDocument']
+                if isinstance(policy_doc, str):
+                    policy_doc = json.loads(policy_doc)
                 print(f"\n   Policy: {policy_name}")
-                print(json.dumps(json.loads(policy['PolicyDocument']), indent=2))
+                print(json.dumps(policy_doc, indent=2))
         
         # Check attached managed policies
         print(f"\n📋 Attached Managed Policies:")
@@ -74,7 +82,9 @@ def check_bedrock_role():
                 RoleName=role_name,
                 PolicyName=policy_name
             )
-            policy_doc = json.loads(policy['PolicyDocument'])
+            policy_doc = policy['PolicyDocument']
+            if isinstance(policy_doc, str):
+                policy_doc = json.loads(policy_doc)
             
             for statement in policy_doc.get('Statement', []):
                 actions = statement.get('Action', [])
