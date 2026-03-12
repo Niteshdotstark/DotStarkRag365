@@ -108,6 +108,8 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     existing_collection = db.query(AgentCollection).filter_by(agent_id=agent_id).first()
     if existing_collection:
         print(f"✅ Reusing existing OpenSearch collection for agent {agent_id}")
+        print(f"   Collection ID: {existing_collection.collection_id}")
+        print(f"   Collection Name: {existing_collection.collection_name}")
         return {
             'collection_id': existing_collection.collection_id,
             'collection_arn': existing_collection.collection_arn,
@@ -119,6 +121,8 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     existing_tenant_collection = db.query(TenantCollection).filter_by(tenant_id=tenant_id).first()
     if existing_tenant_collection:
         print(f"✅ Reusing existing OpenSearch collection from tenant {tenant_id}")
+        print(f"   Collection ID: {existing_tenant_collection.collection_id}")
+        print(f"   Collection Name: {existing_tenant_collection.collection_name}")
         return {
             'collection_id': existing_tenant_collection.collection_id,
             'collection_arn': existing_tenant_collection.collection_arn,
@@ -453,24 +457,12 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
                 "Rules": [
                     {
                         "Resource": [f"collection/{collection_id}"],
-                        "Permission": [
-                            "aoss:CreateCollectionItems",
-                            "aoss:DeleteCollectionItems",
-                            "aoss:UpdateCollectionItems",
-                            "aoss:DescribeCollectionItems"
-                        ],
+                        "Permission": ["aoss:*"],
                         "ResourceType": "collection"
                     },
                     {
                         "Resource": [f"index/{collection_id}/*"],
-                        "Permission": [
-                            "aoss:CreateIndex",
-                            "aoss:DeleteIndex",
-                            "aoss:UpdateIndex",
-                            "aoss:DescribeIndex",
-                            "aoss:ReadDocument",
-                            "aoss:WriteDocument"
-                        ],
+                        "Permission": ["aoss:*"],
                         "ResourceType": "index"
                     }
                 ],
@@ -486,18 +478,26 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
         try:
             aoss_client.get_access_policy(name=policy_name, type='data')
             print(f"   ✅ Data access policy already exists: {policy_name}")
+            # Don't try to update - it's already there with proper permissions
         except aoss_client.exceptions.ResourceNotFoundException:
             # Create new policy
             print(f"   📝 Creating data access policy: {policy_name}")
-            aoss_client.create_access_policy(
-                name=policy_name,
-                type='data',
-                policy=json.dumps(policy_document),
-                description=f'Data access policy for agent {agent_id}'
-            )
-            print(f"   ✅ Data access policy created")
-            # Wait a moment for policy to propagate
-            time.sleep(2)
+            try:
+                aoss_client.create_access_policy(
+                    name=policy_name,
+                    type='data',
+                    policy=json.dumps(policy_document),
+                    description=f'Data access policy for agent {agent_id}'
+                )
+                print(f"   ✅ Data access policy created")
+                # Wait a moment for policy to propagate
+                time.sleep(2)
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ConflictException':
+                    print(f"   ℹ️  Policy already exists (race condition), continuing...")
+                    time.sleep(2)
+                else:
+                    raise
     
     except Exception as e:
         print(f"   ⚠️  Warning: Could not ensure data access policy: {e}")
