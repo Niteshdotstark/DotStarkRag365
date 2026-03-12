@@ -79,7 +79,7 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
     
     # DEMO MODE: Use fixed agent_id to share one collection across all agents
     # This saves $700/month per agent. For production, change to: agent_id = tenant_id
-    agent_id = 3213  # <-- Change this to tenant_id for production
+    agent_id = 132  # <-- Change this to tenant_id for production (now using fixed collection)
     
     if agent_id != tenant_id:
         print(f"🎯 DEMO MODE: Using shared collection (agent_id {agent_id}) for request from agent {tenant_id}")
@@ -169,6 +169,7 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
         current_user_arn = sts_client.get_caller_identity()['Arn']
         
         try:
+            # Create data access policy with FULL permissions including root account
             aoss_client.create_access_policy(
                 name=policy_name,
                 type='data',
@@ -185,14 +186,50 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
                             "Permission": ["aoss:*"]
                         }}
                     ],
-                    "Principal": ["{BEDROCK_ROLE_ARN}", "{current_user_arn}"]
+                    "Principal": [
+                        "{BEDROCK_ROLE_ARN}",
+                        "{current_user_arn}",
+                        "arn:aws:iam::{AWS_ACCOUNT_ID}:root"
+                    ]
                 }}]'''
             )
-            print(f"   ✅ Created data access policy: {policy_name}")
+            print(f"   ✅ Created data access policy with full permissions: {policy_name}")
         except ClientError as e:
-            if e.response['Error']['Code'] != 'ConflictException':
+            if e.response['Error']['Code'] == 'ConflictException':
+                print(f"   ⚠️  Data access policy already exists, updating it...")
+                # Delete and recreate to update permissions
+                try:
+                    aoss_client.delete_access_policy(name=policy_name, type='data')
+                    time.sleep(2)  # Wait for deletion to propagate
+                    
+                    aoss_client.create_access_policy(
+                        name=policy_name,
+                        type='data',
+                        policy=f'''[{{
+                            "Rules": [
+                                {{
+                                    "ResourceType": "collection",
+                                    "Resource": ["collection/{collection_name}"],
+                                    "Permission": ["aoss:*"]
+                                }},
+                                {{
+                                    "ResourceType": "index",
+                                    "Resource": ["index/{collection_name}/*"],
+                                    "Permission": ["aoss:*"]
+                                }}
+                            ],
+                            "Principal": [
+                                "{BEDROCK_ROLE_ARN}",
+                                "{current_user_arn}",
+                                "arn:aws:iam::{AWS_ACCOUNT_ID}:root"
+                            ]
+                        }}]'''
+                    )
+                    print(f"   ✅ Updated data access policy with full permissions: {policy_name}")
+                except Exception as update_error:
+                    print(f"   ⚠️  Could not update policy: {update_error}")
+            else:
                 raise
-            print(f"   ℹ️  Data access policy already exists: {policy_name}")
         
         # Create collection
         collection_created_now = False
