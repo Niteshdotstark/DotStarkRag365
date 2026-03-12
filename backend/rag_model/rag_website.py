@@ -670,6 +670,39 @@ def create_data_source_and_start_crawl(
     """
     print(f"🕷️  Creating Web Crawler data source for {website_url}")
     
+    # First, ensure the knowledge base is ACTIVE before creating data source
+    print(f"⏳ Ensuring knowledge base is ACTIVE...")
+    bedrock_agent = boto3.client('bedrock-agent', region_name=AWS_REGION)
+    
+    max_wait = 300  # 5 minutes
+    start_time = time.time()
+    kb_status = None
+    
+    while time.time() - start_time < max_wait:
+        try:
+            kb_response = bedrock_agent.get_knowledge_base(knowledgeBaseId=knowledge_base_id)
+            kb_status = kb_response['knowledgeBase']['status']
+            
+            if kb_status == 'ACTIVE':
+                print(f"✅ Knowledge base is ACTIVE")
+                break
+            elif kb_status == 'FAILED':
+                raise Exception(f"Knowledge base is in FAILED status")
+            else:
+                elapsed = int(time.time() - start_time)
+                print(f"   ⏳ KB status: {kb_status} (waited {elapsed}s)")
+                time.sleep(5)
+        except Exception as e:
+            if 'ResourceNotFoundException' in str(e):
+                print(f"   ⚠️  KB not found yet, waiting...")
+                time.sleep(5)
+            else:
+                raise
+    else:
+        print(f"⚠️  KB not ACTIVE after {max_wait}s, but continuing...")
+    
+    print()
+    
     # Validate URL format
     import re
     url_pattern = re.compile(
@@ -692,7 +725,7 @@ def create_data_source_and_start_crawl(
     if not 1 <= max_pages <= 25000:
         raise ValueError(f"Invalid max_pages: {max_pages}. Must be between 1 and 25000")
     
-    bedrock_agent = boto3.client('bedrock-agent', region_name=AWS_REGION)
+    # bedrock_agent already initialized above
     
     import uuid as uuid_lib
     data_source_name = f"web-crawler-{str(uuid_lib.uuid4())[:8]}"
