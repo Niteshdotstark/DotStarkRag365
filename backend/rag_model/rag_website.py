@@ -114,7 +114,8 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
             'collection_id': existing_collection.collection_id,
             'collection_arn': existing_collection.collection_arn,
             'collection_name': existing_collection.collection_name,
-            'collection_endpoint': existing_collection.collection_endpoint
+            'collection_endpoint': existing_collection.collection_endpoint,
+            'owner_agent_id': agent_id  # Return the actual owner agent_id
         }
     
     # Also check old tenant collections for backward compatibility
@@ -127,7 +128,8 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
             'collection_id': existing_tenant_collection.collection_id,
             'collection_arn': existing_tenant_collection.collection_arn,
             'collection_name': existing_tenant_collection.collection_name,
-            'collection_endpoint': existing_tenant_collection.collection_endpoint
+            'collection_endpoint': existing_tenant_collection.collection_endpoint,
+            'owner_agent_id': tenant_id  # For old tenant collections, use tenant_id
         }
     
     # Create new collection
@@ -376,7 +378,8 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
             'collection_id': collection_id,
             'collection_arn': collection_arn,
             'collection_name': collection_name,
-            'collection_endpoint': collection_endpoint
+            'collection_endpoint': collection_endpoint,
+            'owner_agent_id': agent_id  # Return the actual owner agent_id
         }
         
     except ClientError as e:
@@ -384,15 +387,16 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
         raise
 
 
-def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session) -> dict:
+def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session, collection_owner_agent_id: int = None) -> dict:
     """
     Creates or retrieves a Bedrock Knowledge Base for an agent.
     Reuses existing knowledge base if one exists for the agent.
     
     Args:
-        agent_id: Agent identifier
+        agent_id: Agent identifier (requesting agent)
         collection_arn: ARN of the OpenSearch Serverless collection
         db: Database session
+        collection_owner_agent_id: Agent ID that owns the collection (for shared collections)
         
     Returns:
         dict: {
@@ -406,6 +410,10 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
         ValueError: Invalid parameters
     """
     from models import WebsiteCrawl
+    
+    # If collection_owner_agent_id is not provided, assume agent owns its own collection
+    if collection_owner_agent_id is None:
+        collection_owner_agent_id = agent_id
     
     # Check if agent already has a knowledge base
     existing_crawl = db.query(WebsiteCrawl).filter(
@@ -444,12 +452,12 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
     try:
         aoss_client = boto3.client('opensearchserverless', region_name=AWS_REGION)
         
-        # Determine policy name based on collection
-        # For shared collection (agent 3421), use kb-policy-3421
-        if 'r0fqf4rli0n632ypd4la' in collection_arn:
-            policy_name = 'kb-policy-3421'
-        else:
-            policy_name = f'kb-policy-{agent_id}'
+        # Use the collection owner's agent_id for the policy name
+        # This ensures we use the correct policy for shared collections
+        policy_name = f'kb-policy-{collection_owner_agent_id}'
+        
+        if collection_owner_agent_id != agent_id:
+            print(f"   ℹ️  Using shared collection policy: {policy_name} (collection owner: agent {collection_owner_agent_id})")
         
         import json
         policy_document = [

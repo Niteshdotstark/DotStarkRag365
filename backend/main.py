@@ -1780,7 +1780,8 @@ def process_website_crawl_background(
             kb_result = create_or_get_knowledge_base(
                 agent_id=agent_id,
                 collection_arn=collection['collection_arn'],
-                db=db
+                db=db,
+                collection_owner_agent_id=collection.get('owner_agent_id', agent_id)  # Pass the collection owner
             )
             print(f"✅ Knowledge Base ready: {kb_result['knowledge_base_id']}")
             
