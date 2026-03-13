@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import time
 import os
+import json
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -117,6 +118,37 @@ def create_or_get_opensearch_collection(tenant_id: int, db: Session) -> dict:
             'collection_endpoint': existing_collection.collection_endpoint,
             'owner_agent_id': agent_id  # Return the actual owner agent_id
         }
+    
+    # FALLBACK: If not in database, use the hardcoded collection (for agent 132)
+    if agent_id == 132:
+        print(f"✅ Using hardcoded collection for agent {agent_id} (not in database)")
+        hardcoded_collection = {
+            'collection_id': '3wwawnad009sxxxdsnni',
+            'collection_arn': f'arn:aws:aoss:{AWS_REGION}:{AWS_ACCOUNT_ID}:collection/3wwawnad009sxxxdsnni',
+            'collection_name': 'kb-collection-321',
+            'collection_endpoint': 'https://3wwawnad009sxxxdsnni.ap-south-1.aoss.amazonaws.com',
+            'owner_agent_id': agent_id
+        }
+        print(f"   Collection ID: {hardcoded_collection['collection_id']}")
+        print(f"   Collection Name: {hardcoded_collection['collection_name']}")
+        
+        # Try to save to database for future use
+        try:
+            agent_collection = AgentCollection(
+                agent_id=agent_id,
+                collection_id=hardcoded_collection['collection_id'],
+                collection_arn=hardcoded_collection['collection_arn'],
+                collection_name=hardcoded_collection['collection_name'],
+                collection_endpoint=hardcoded_collection['collection_endpoint']
+            )
+            db.add(agent_collection)
+            db.commit()
+            print(f"   ✅ Saved to database for future use")
+        except Exception as e:
+            print(f"   ⚠️  Could not save to database: {e}")
+            db.rollback()
+        
+        return hardcoded_collection
     
     # Also check old tenant collections for backward compatibility
     existing_tenant_collection = db.query(TenantCollection).filter_by(tenant_id=tenant_id).first()
@@ -447,49 +479,93 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
     # Extract collection ID from ARN for policy creation
     collection_id = collection_arn.split('/')[-1]
     
-    # Ensure data access policy exists for the collection
-    print(f"🔐 Ensuring data access policy exists for collection...")
+    # Ensure data access policy exists and includes this agent
+    print(f"🔐 Ensuring data access policy includes agent {agent_id}...")
     try:
         aoss_client = boto3.client('opensearchserverless', region_name=AWS_REGION)
         
         # Use the collection owner's agent_id for the policy name
-        # This ensures we use the correct policy for shared collections
         policy_name = f'kb-policy-{collection_owner_agent_id}'
         
         if collection_owner_agent_id != agent_id:
             print(f"   ℹ️  Using shared collection policy: {policy_name} (collection owner: agent {collection_owner_agent_id})")
         
-        import json
-        policy_document = [
-            {
-                "Rules": [
-                    {
-                        "Resource": [f"collection/{collection_id}"],
-                        "Permission": ["aoss:*"],
-                        "ResourceType": "collection"
-                    },
-                    {
-                        "Resource": [f"index/{collection_id}/*"],
-                        "Permission": ["aoss:*"],
-                        "ResourceType": "index"
-                    }
-                ],
-                "Principal": [
-                    BEDROCK_ROLE_ARN,
-                    f"arn:aws:iam::{AWS_ACCOUNT_ID}:root"
-                ],
-                "Description": f"Data access policy for agent {agent_id}"
-            }
-        ]
-        
         # Try to get existing policy
+        policy_exists = False
+        current_policy = None
+        policy_version = None
+        
         try:
-            aoss_client.get_access_policy(name=policy_name, type='data')
-            print(f"   ✅ Data access policy already exists: {policy_name}")
-            # Don't try to update - it's already there with proper permissions
+            response = aoss_client.get_access_policy(name=policy_name, type='data')
+            policy_exists = True
+            current_policy = json.loads(response['accessPolicyDetail']['policy'])
+            policy_version = response['accessPolicyDetail']['policyVersion']
+            print(f"   ✅ Found existing data access policy: {policy_name}")
         except aoss_client.exceptions.ResourceNotFoundException:
+            print(f"   ℹ️  Policy doesn't exist, will create new one")
+        
+        # Check if current agent's KB role is in the policy
+        agent_kb_role_arn = BEDROCK_ROLE_ARN  # All agents use the same Bedrock role
+        needs_update = False
+        
+        if policy_exists and current_policy:
+            # Extract principals from policy
+            principals = current_policy[0].get('Principal', [])
+            
+            if agent_kb_role_arn not in principals:
+                print(f"   ⚠️  Agent {agent_id}'s KB role not in policy, updating...")
+                needs_update = True
+                
+                # Add the agent's KB role to principals
+                if agent_kb_role_arn not in principals:
+                    principals.append(agent_kb_role_arn)
+                
+                # Update the policy document
+                current_policy[0]['Principal'] = principals
+                
+                # Update the policy in AWS
+                try:
+                    aoss_client.update_access_policy(
+                        name=policy_name,
+                        type='data',
+                        policyVersion=policy_version,
+                        policy=json.dumps(current_policy),
+                        description=f'Data access policy for shared collection (agents: {collection_owner_agent_id}, {agent_id})'
+                    )
+                    print(f"   ✅ Updated policy to include agent {agent_id}")
+                    time.sleep(5)  # Wait for policy update to propagate
+                except ClientError as update_error:
+                    print(f"   ❌ Failed to update policy: {update_error}")
+                    raise
+            else:
+                print(f"   ✅ Agent {agent_id}'s KB role already in policy")
+        
+        elif not policy_exists:
             # Create new policy
-            print(f"   📝 Creating data access policy: {policy_name}")
+            print(f"   📝 Creating new data access policy: {policy_name}")
+            
+            policy_document = [
+                {
+                    "Rules": [
+                        {
+                            "Resource": [f"collection/{collection_id}"],
+                            "Permission": ["aoss:*"],
+                            "ResourceType": "collection"
+                        },
+                        {
+                            "Resource": [f"index/{collection_id}/*"],
+                            "Permission": ["aoss:*"],
+                            "ResourceType": "index"
+                        }
+                    ],
+                    "Principal": [
+                        BEDROCK_ROLE_ARN,
+                        f"arn:aws:iam::{AWS_ACCOUNT_ID}:root"
+                    ],
+                    "Description": f"Data access policy for agent {agent_id}"
+                }
+            ]
+            
             try:
                 aoss_client.create_access_policy(
                     name=policy_name,
@@ -498,8 +574,7 @@ def create_or_get_knowledge_base(agent_id: int, collection_arn: str, db: Session
                     description=f'Data access policy for agent {agent_id}'
                 )
                 print(f"   ✅ Data access policy created")
-                # Wait a moment for policy to propagate
-                time.sleep(2)
+                time.sleep(2)  # Wait for policy to propagate
             except ClientError as e:
                 if e.response['Error']['Code'] == 'ConflictException':
                     print(f"   ℹ️  Policy already exists (race condition), continuing...")
